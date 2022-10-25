@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use soroban_auth_pool::{token, pool::{Pool, PoolClient}};
 
 use rand::{thread_rng, RngCore};
