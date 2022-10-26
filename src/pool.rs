@@ -9,7 +9,7 @@ use crate::{accounting::{get_collateral, set_collateral, get_liabilities, set_li
 #[contracttype]
 pub enum DataKey {
     Token, // address of the token the pool operates with
-    Nonce(Identifier),
+    Nonce(Identifier), // nonces for auth'ing `borrow_obo`
     Liability(Identifier), // any tokens owed to the pool
     Collateral(Identifier) // credit for tokens from the pool
 }
@@ -89,17 +89,17 @@ impl PoolTrait for Pool {
         set_collateral(&e, sender_id, cur_collateral + amount);
     }
 
-    /// Runs without needing any approval logic (not even a permit!)
+    /// Runs an approval and deposit in the same transaction
     fn deposit_p(e: Env, token_approval_sig: Signature, amount: i64) {
         let sig_id = token_approval_sig.identifier(&e);
         let token_client = get_token_client(&e);
         let amount_bi = &BigInt::from_i64(&e, amount);
 
-        // run the approval
+        // Run the approval
         let sender_nonce = token_client.nonce(&sig_id);
         token_client.approve(&token_approval_sig, &sender_nonce, &get_contract_id(&e), &amount_bi);
 
-        // now the pool has the appropriate permissions to run `transfer_from`
+        // Now the pool has the appropriate permissions to run `transfer_from`
         token_client.xfer_from(
             &Signature::Invoker,
             &BigInt::zero(&e),
@@ -114,7 +114,7 @@ impl PoolTrait for Pool {
 
     /// A signature gives permission to the sender to borrow funds from the signer's collateral balance!
     fn borrow_obo(e: Env, sig: Signature, amount: i64, expiration: u64) {
-        // verify signature is not expired
+        // Verify signature is not expired
         if expiration < e.ledger().timestamp() {
             panic!("expired signature")
         }
@@ -124,19 +124,19 @@ impl PoolTrait for Pool {
         let sender_id = Identifier::from(e.invoker());
         let nonce = get_nonce(&e, &signer_id);
 
-        // by including the `sender` in the signature alongside the `contract_id` and function `symbol`
+        // By including the `sender` in the signature alongside the `contract_id` and function `symbol`
         // the signer can be ensured nobody other than the sender can execute against this signature
         verify(&e, &sig, symbol!("borrow_obo"), (&signer_id, &nonce, &sender_id, &amount, &expiration));
         verify_and_consume_nonce(&e, &sig, &nonce);
 
-        // check collateral and liability balances
+        // Check collateral and liability balances
         let signer_collateral = get_collateral(&e, signer_id.clone());
         let signer_liability = get_liabilities(&e, signer_id.clone());
         if signer_collateral < (signer_liability + amount) {
             panic!("not enough collateral")
         }
 
-        // looks good - execute token distribution
+        // Looks good - execute token distribution
         set_liabilities(&e, signer_id, signer_liability + amount);
 
         let token_client = get_token_client(&e);
